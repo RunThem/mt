@@ -10,7 +10,7 @@ mt 只有一个窗口, 没有菜单和多层对话框: 窗口获得焦点后按 
 - **拖放载入**: 从文件管理器把图片拖到窗口任意位置.
 - **自动识别**: 图片载入后立即请求 freeocr.ai, 无需手动触发; 新图片会覆盖旧图并重新识别.
 - **结果可编辑**: 右侧文本框可直接修改识别结果, 一键复制. 请求期间手动修改的内容不会被覆盖, 可点击 `应用新结果`.
-- **保留排版**: 显示 freeocr.ai 返回的 Markdown 文本, 表格和公式以文本形式保留.
+- **纯文本结果**: 请求使用 `format=text`, 直接显示剥离 Markdown 标记的纯文本, 便于复制.
 - **配置自保存**: 输入 `focr_` 开头的 API Key 后自动保存, 输入框掩码显示.
 - **统一 PNG 上传**: 支持 PNG / JPEG / GIF / BMP / WebP / TIFF 与剪贴板位图; 上传前统一解码为 RGBA 并重新编码为 PNG.
 
@@ -52,6 +52,7 @@ Debug 构建保留控制台输出; Release 构建使用 GUI 子系统, 双击不
 | 配置文件 | `C:\Build\mt-config.json` |
 | API 端点 | `https://freeocr.ai/api/v1/platform/ocr` |
 | 请求格式 | `multipart/form-data`, 字段 `image` |
+| 响应格式 | `format=text`, 返回纯文本 (`format` 的 API 默认值为 `json`) |
 | 请求超时 | 120 秒 |
 | 图片最长边 | 2048 px, 超出则等比缩小 |
 

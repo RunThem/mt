@@ -54,6 +54,30 @@ impl fmt::Display for OcrError {
 
 impl std::error::Error for OcrError {}
 
+/// OCR 响应格式. API 默认为 `Json`, 应用当前固定请求纯文本.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum OcrFormat {
+  /// 保留版面布局的 GitHub Flavored Markdown
+  #[default]
+  Json,
+  /// 剥离 Markdown 标记后的纯文本
+  Text,
+}
+
+impl OcrFormat {
+  pub fn query_value(self) -> &'static str {
+    match self {
+      Self::Json => "json",
+      Self::Text => "text",
+    }
+  }
+}
+
+/// 拼接带 `format` 查询参数的 OCR 端点.
+pub fn request_url(format: OcrFormat) -> String {
+  format!("{API_URL}?format={}", format.query_value())
+}
+
 /// 待上传的图片. 统一为重新编码后的 PNG.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OcrUpload {
@@ -90,7 +114,7 @@ impl OcrUpload {
   }
 
   /// 构造 multipart 请求. 网络发送与响应解析在 `OcrClient::recognize` 中.
-  pub fn into_request(self, api_key: &str) -> Result<Request, OcrError> {
+  pub fn into_request(self, api_key: &str, format: OcrFormat) -> Result<Request, OcrError> {
     validate_api_key(api_key)?;
     if self.png.is_empty() {
       return Err(OcrError::EmptyImage);
@@ -109,7 +133,7 @@ impl OcrUpload {
       .collect::<Vec<_>>();
 
     Ok(
-      Request::post(API_URL)
+      Request::post(request_url(format))
         .with_header("Authorization", authorization_value(api_key))
         .with_header("Accept", "application/json")
         .with_body(Body::multipart(parts)),
@@ -198,8 +222,8 @@ impl OcrClient {
   }
 
   /// 发送请求并解析结果.
-  pub fn recognize(&self, upload: OcrUpload, api_key: &str) -> Result<String, OcrError> {
-    let request = upload.into_request(api_key)?;
+  pub fn recognize(&self, upload: OcrUpload, api_key: &str, format: OcrFormat) -> Result<String, OcrError> {
+    let request = upload.into_request(api_key, format)?;
     let response = self.client.request(request).map_err(|_| OcrError::Network)?;
     let status = response.status().code();
     let body = response.text().map_err(|_| OcrError::Network)?;
@@ -233,8 +257,21 @@ mod tests {
 
   #[test]
   fn request_rejects_empty_image() {
-    let result = OcrUpload::new(Vec::new(), "empty.png").into_request("focr_test");
+    let result = OcrUpload::new(Vec::new(), "empty.png").into_request("focr_test", OcrFormat::Text);
     assert_eq!(result.unwrap_err(), OcrError::EmptyImage);
+  }
+
+  #[test]
+  fn json_is_the_default_format() {
+    assert_eq!(OcrFormat::default(), OcrFormat::Json);
+    assert_eq!(OcrFormat::Json.query_value(), "json");
+    assert_eq!(OcrFormat::Text.query_value(), "text");
+  }
+
+  #[test]
+  fn request_url_includes_format() {
+    assert_eq!(request_url(OcrFormat::Json), format!("{API_URL}?format=json"));
+    assert_eq!(request_url(OcrFormat::Text), format!("{API_URL}?format=text"));
   }
 
   #[test]
@@ -306,7 +343,9 @@ mod tests {
     let image_path = std::env::var("FREEOCR_TEST_IMAGE").expect("需要设置 FREEOCR_TEST_IMAGE");
     let png = std::fs::read(image_path).expect("读取测试图片失败");
     let client = OcrClient::new().expect("创建 OCR 客户端失败");
-    let text = client.recognize(OcrUpload::new(png, "ocr-test.png"), &api_key).expect("OCR 请求失败");
+    let text = client
+      .recognize(OcrUpload::new(png, "ocr-test.png"), &api_key, OcrFormat::Text)
+      .expect("OCR 请求失败");
     println!("OCR 返回文本:\n{text}");
     assert!(!text.trim().is_empty(), "OCR 返回了空文本");
   }

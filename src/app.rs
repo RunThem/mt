@@ -7,7 +7,7 @@ use eframe::egui::{self, Color32, TextureHandle, TextureOptions};
 use crate::config::{Config, config_path};
 use crate::constants::MARGIN_3MM;
 use crate::image_source::{self, LoadedImage};
-use crate::ocr::{self, OcrClient, OcrUpload};
+use crate::ocr::{self, OcrClient, OcrFormat, OcrUpload};
 
 const SUCCESS_COLOR: Color32 = Color32::from_rgb(0x2e, 0x7d, 0x32);
 const BOX_BORDER_COLOR: Color32 = Color32::from_gray(160);
@@ -351,7 +351,7 @@ impl App {
       .stack_size(16 * 1024 * 1024)
       .spawn(move || {
         let outcome = match OcrClient::new() {
-          Ok(client) => match client.recognize(upload, &api_key) {
+          Ok(client) => match client.recognize(upload, &api_key, OcrFormat::Text) {
             Ok(text) => OcrOutcome::Success(text),
             Err(error) => OcrOutcome::Failure(error.user_message()),
           },
