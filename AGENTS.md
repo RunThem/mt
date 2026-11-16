@@ -36,6 +36,7 @@ cargo test             # 单元测试
 依赖直接从同级 `D:\Code\ct\Cargo.toml` 取版本, 保持两项目一致:
 
 - **GUI**: `eframe` / `egui` 0.33.3. 入口用 `eframe::run_native`, 事件循环必须在主线程.
+- **字体**: 内置 `src/MapleMonoNormalNL-NF-CN-Bold.ttf`(来自 ct 项目), 作为 Proportional / Monospace 主字体, 保证中文显示.
 - **HTTP**: `nyquest` + `nyquest-preset`, 使用 `BlockingClient`; 需开启 `multipart` feature(`features = ["json", "blocking-stream", "multipart"]`), 因为 OCR 接口是 `multipart/form-data`.
 - **JSON**: `serde` + `serde_json`; **错误**: `anyhow`.
 - **剪贴板图片**: `arboard`. eframe / egui 原生只处理文本剪贴板, 读取剪贴板图片必须用 `arboard::Clipboard::get_image`.
