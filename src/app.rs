@@ -71,6 +71,7 @@ impl App {
     let path = config_path().to_path_buf();
     let (config, notice) = match Config::load(&path) {
       Ok(config) => (config, None),
+      Err(_) if !path.exists() => (Config::default(), Some(Notice::info("未找到配置文件, 已使用默认配置"))),
       Err(error) => (Config::default(), Some(Notice::error(format!("读取配置失败, 已使用默认配置: {error:#}")))),
     };
     let key_input = config.api_key.clone();
