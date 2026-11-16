@@ -297,4 +297,17 @@ mod tests {
     assert_eq!(OcrError::ServerError.user_message(), "服务端处理失败");
     assert_eq!(OcrError::Network.user_message(), "网络请求失败, 请检查连接");
   }
+
+  /// 手动联调: FREEOCR_TEST_KEY=... FREEOCR_TEST_IMAGE=... cargo test live_ocr_manual -- --ignored --nocapture
+  #[test]
+  #[ignore]
+  fn live_ocr_manual() {
+    let api_key = std::env::var("FREEOCR_TEST_KEY").expect("需要设置 FREEOCR_TEST_KEY");
+    let image_path = std::env::var("FREEOCR_TEST_IMAGE").expect("需要设置 FREEOCR_TEST_IMAGE");
+    let png = std::fs::read(image_path).expect("读取测试图片失败");
+    let client = OcrClient::new().expect("创建 OCR 客户端失败");
+    let text = client.recognize(OcrUpload::new(png, "ocr-test.png"), &api_key).expect("OCR 请求失败");
+    println!("OCR 返回文本:\n{text}");
+    assert!(!text.trim().is_empty(), "OCR 返回了空文本");
+  }
 }
