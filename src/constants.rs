@@ -22,3 +22,6 @@ pub const MAX_IMAGE_EDGE: u32 = 2048;
 
 /// API Key 固定前缀
 pub const API_KEY_PREFIX: &str = "focr_";
+
+/// 3mm 对应的逻辑像素(96 DPI), 用于窗口边距
+pub const MARGIN_3MM: f32 = 11.34;

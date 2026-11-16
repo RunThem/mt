@@ -5,12 +5,11 @@ use std::time::{Duration, Instant};
 use eframe::egui::{self, Color32, TextureHandle, TextureOptions};
 
 use crate::config::{Config, config_path};
-use crate::constants::API_KEY_PREFIX;
+use crate::constants::{API_KEY_PREFIX, MARGIN_3MM};
 use crate::image_source::{self, LoadedImage};
 use crate::ocr::{self, OcrClient, OcrUpload};
 
 const SUCCESS_COLOR: Color32 = Color32::from_rgb(0x2e, 0x7d, 0x32);
-const WARN_COLOR: Color32 = Color32::from_rgb(0xb2, 0x6a, 0x00);
 
 /// OCR 单次请求的 UI 状态机. 请求中不允许再次提交.
 enum OcrState {
@@ -31,6 +30,8 @@ pub struct App {
   key_input: String,
   /// 停止输入后延迟保存 API Key
   key_save_due: Option<Instant>,
+  /// 图片区获得焦点后, Ctrl+C / Ctrl+V 读取剪贴板图片
+  image_area_active: bool,
   image: Option<LoadedImage>,
   texture: Option<TextureHandle>,
   texture_seq: u64,
@@ -59,6 +60,7 @@ impl App {
       config_path: path,
       key_input,
       key_save_due: None,
+      image_area_active: false,
       image: None,
       texture: None,
       texture_seq: 0,
@@ -83,33 +85,33 @@ impl App {
     self.result_text.push_str(&message.into());
   }
 
-  fn is_requesting(&self) -> bool {
-    matches!(self.ocr_state, OcrState::Requesting { .. })
-  }
-
-  fn key_panel(&mut self, ctx: &egui::Context) {
+  fn config_section(&mut self, ui: &mut egui::Ui) {
+    let margin = MARGIN_3MM;
     let mut commit_now = false;
-    egui::TopBottomPanel::top("api_key_panel").show(ctx, |ui| {
-      ui.add_space(6.0);
-      ui.horizontal(|ui| {
-        ui.label("API Key:");
-        let response = ui.add(
-          egui::TextEdit::singleline(&mut self.key_input)
-            .password(true)
-            .hint_text("focr_...")
-            .desired_width(ui.available_width()),
-        );
-        if response.changed() {
-          self.key_save_due = Some(Instant::now() + Duration::from_millis(600));
-          ctx.request_repaint_after(Duration::from_millis(600));
-        }
-        if response.lost_focus() {
-          commit_now = true;
-        }
-      });
-      ui.add_space(6.0);
+    ui.add_space(margin);
+    ui.horizontal(|ui| {
+      ui.add_space(margin);
+      ui.label("API Key:");
+      let response = ui.add(
+        egui::TextEdit::singleline(&mut self.key_input)
+          .password(true)
+          .hint_text("focr_...")
+          .desired_width((ui.available_width() - margin).max(80.0)),
+      );
+      if response.changed() {
+        self.key_save_due = Some(Instant::now() + Duration::from_millis(600));
+        ui.ctx().request_repaint_after(Duration::from_millis(600));
+      }
+      if response.gained_focus() {
+        self.image_area_active = false;
+      }
+      if response.lost_focus() {
+        commit_now = true;
+      }
     });
-    self.flush_key_save(ctx, commit_now);
+    ui.add_space(6.0);
+    let ctx = ui.ctx().clone();
+    self.flush_key_save(&ctx, commit_now);
   }
 
   fn flush_key_save(&mut self, ctx: &egui::Context, force: bool) {
@@ -123,133 +125,155 @@ impl App {
     self.save_key(ctx, force);
   }
 
-  fn image_section(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
-    let requesting = self.is_requesting();
-    ui.horizontal(|ui| {
-      if ui.add_enabled(!requesting, egui::Button::new("打开图片")).clicked() {
-        self.pick_file(ctx);
-      }
-      if ui.add_enabled(!requesting, egui::Button::new("粘贴图片")).clicked() {
-        self.paste_image(ctx);
-      }
-      if self.image.is_some() && ui.add_enabled(!requesting, egui::Button::new("清除图片")).clicked() {
-        self.clear_image();
-      }
+  fn image_section(&mut self, ui: &mut egui::Ui) {
+    let margin = MARGIN_3MM;
+    ui.add_space(margin);
+    let available = ui.available_rect_before_wrap();
+    let rect = egui::Rect::from_min_max(
+      egui::pos2(available.left() + margin, available.top()),
+      egui::pos2(available.right() - margin, available.bottom() - margin),
+    );
+    if rect.width() < 1.0 || rect.height() < 1.0 {
+      return;
+    }
 
-      ui.add_space(12.0);
-      if let Some(image) = &self.image {
-        ui.label(egui::RichText::new(&image.filename).strong());
-        ui.label(format!("{} x {}", image.width(), image.height()));
-      } else {
-        ui.label(egui::RichText::new("可拖放图片到窗口").weak());
-      }
-    });
-  }
+    let response = ui.interact(rect, ui.id().with("image_area"), egui::Sense::click());
+    if response.clicked() {
+      self.image_area_active = true;
+      ui.ctx().memory_mut(|memory| {
+        if let Some(focused) = memory.focused() {
+          memory.surrender_focus(focused);
+        }
+      });
+    }
 
-  fn preview(&self, ui: &mut egui::Ui) {
-    let height = (ui.available_height() * 0.42).clamp(140.0, 420.0);
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), height), egui::Sense::hover());
+    let ctx = ui.ctx().clone();
+    // egui-winit 会把 Ctrl+C 转成 Event::Copy, 不会产生 Key::C.
+    let shortcut = self.image_area_active && ctx.input(|input| input.events.iter().any(|event| matches!(event, egui::Event::Copy)));
+    if shortcut {
+      self.load_clipboard(&ctx);
+    }
+
+    let background = if response.hovered() || self.image_area_active {
+      ui.visuals().widgets.hovered.bg_fill
+    } else {
+      ui.visuals().faint_bg_color
+    };
+    ui.painter().rect_filled(rect, 6.0, background);
 
     if let Some(texture) = &self.texture {
       let size = texture.size_vec2();
       let scale = (rect.width() / size.x).min(rect.height() / size.y).min(1.0);
       let image_rect = egui::Rect::from_center_size(rect.center(), size * scale);
       egui::Image::new(texture).paint_at(ui, image_rect);
+      if let Some(image) = &self.image {
+        let caption = format!("{}  {} x {}", image.filename, image.width(), image.height());
+        let galley = ui.painter().layout_no_wrap(caption, egui::FontId::proportional(12.0), Color32::WHITE);
+        let padding = egui::vec2(6.0, 3.0);
+        let caption_rect = egui::Rect::from_min_size(rect.left_top() + egui::vec2(6.0, 6.0), galley.size() + padding * 2.0);
+        ui.painter().rect_filled(caption_rect, 3.0, Color32::from_black_alpha(150));
+        ui.painter().galley(caption_rect.min + padding, galley, Color32::WHITE);
+      }
     } else {
-      ui.painter().text(
-        rect.center(),
-        egui::Align2::CENTER_CENTER,
-        "尚未选择图片",
-        egui::FontId::proportional(16.0),
-        ui.visuals().weak_text_color(),
+      let color = ui.visuals().weak_text_color();
+      let galley = ui.painter().layout(
+        "点击此处后按 Ctrl+C 读取剪贴板图片\n或从文件管理器拖放图片".to_string(),
+        egui::FontId::proportional(15.0),
+        color,
+        (rect.width() - 20.0).max(40.0),
+      );
+      let pos = rect.center() - galley.size() / 2.0;
+      ui.painter().galley(pos, galley, color);
+    }
+
+    if self.image_area_active {
+      ui.painter().rect_stroke(
+        rect,
+        6.0,
+        egui::Stroke::new(1.5_f32, ui.visuals().selection.stroke.color),
+        egui::StrokeKind::Inside,
       );
     }
   }
 
-  fn result_section(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
-    ui.separator();
-    ui.horizontal(|ui| {
-      let can_ocr = self.image.is_some() && !self.key_input.trim().is_empty() && !self.is_requesting();
-      if ui.add_enabled(can_ocr, egui::Button::new("开始 OCR")).clicked() {
-        self.start_ocr(ctx);
-      }
-
-      ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        if ui.add_enabled(!self.result_text.is_empty(), egui::Button::new("复制")).clicked() {
-          ctx.copy_text(self.result_text.clone());
-          self.copied_at = Some(Instant::now());
-        }
-        if self.copied_at.is_some_and(|at| at.elapsed() < Duration::from_secs(2)) {
-          ui.colored_label(SUCCESS_COLOR, "已复制");
-        }
-        if ui.add_enabled(!self.result_text.is_empty(), egui::Button::new("清空")).clicked() {
-          self.result_text.clear();
-          self.result_dirty = false;
-          self.pending_result = None;
-        }
-      });
-    });
-
-    if self.pending_result.is_some() {
-      let mut apply = false;
-      let mut discard = false;
-      ui.horizontal(|ui| {
-        ui.colored_label(WARN_COLOR, "已保留手动修改的内容, 新结果未自动覆盖");
-        if ui.button("应用新结果").clicked() {
-          apply = true;
-        }
-        if ui.button("丢弃").clicked() {
-          discard = true;
-        }
-      });
-      if apply && let Some(text) = self.pending_result.take() {
-        self.result_text = text;
-        self.result_dirty = false;
-      }
-      if discard {
-        self.pending_result = None;
-      }
-    }
-
-    ui.add_space(4.0);
-    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-      let response = ui.add(
-        egui::TextEdit::multiline(&mut self.result_text)
-          .desired_width(f32::INFINITY)
-          .desired_rows(12)
-          .hint_text("OCR 结果会显示在这里, 可手动修改后再复制")
-          .code_editor(),
-      );
-      if response.changed() {
-        self.result_dirty = true;
-      }
-    });
-  }
-
-  fn pick_file(&mut self, ctx: &egui::Context) {
-    let Some(path) = rfd::FileDialog::new()
-      .add_filter("图片", &["png", "jpg", "jpeg", "bmp", "gif", "webp", "tif", "tiff"])
-      .pick_file()
-    else {
-      return;
-    };
-    self.load_path(ctx, &path);
-  }
-
-  fn paste_image(&mut self, ctx: &egui::Context) {
-    if self.is_requesting() {
-      return;
-    }
+  fn load_clipboard(&mut self, ctx: &egui::Context) {
     match image_source::from_clipboard() {
       Ok(image) => self.apply_image(ctx, image),
       Err(error) => self.push_log(format!("{error:#}")),
     }
   }
 
-  fn load_path(&mut self, ctx: &egui::Context, path: &Path) {
-    if self.is_requesting() {
+  fn result_section(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
+    let margin = MARGIN_3MM;
+    let area = ui.max_rect().shrink2(egui::vec2(margin, margin));
+    if area.width() < 1.0 || area.height() < 1.0 {
       return;
     }
+
+    let bottom_height = (area.height() * 0.18).clamp(90.0, 140.0);
+    let text_rect = egui::Rect::from_min_max(area.min, egui::pos2(area.max.x, area.max.y - bottom_height));
+    let row_height = ui.text_style_height(&egui::TextStyle::Monospace);
+    let rows = ((text_rect.height() - 8.0) / row_height).floor().max(3.0) as usize;
+    let mut text_ui = ui.new_child(
+      egui::UiBuilder::new()
+        .max_rect(text_rect)
+        .layout(egui::Layout::top_down(egui::Align::Min)),
+    );
+    let response = text_ui.add_sized(
+      [text_rect.width(), text_rect.height()],
+      egui::TextEdit::multiline(&mut self.result_text)
+        .desired_width(f32::INFINITY)
+        .desired_rows(rows)
+        .hint_text("OCR 结果与日志会显示在这里, 可手动修改后再复制")
+        .code_editor(),
+    );
+    if response.gained_focus() {
+      self.image_area_active = false;
+    }
+    if response.changed() {
+      self.result_dirty = true;
+    }
+
+    let button_area = egui::Rect::from_min_max(egui::pos2(area.min.x, text_rect.max.y), area.max);
+    let show_copied = self.copied_at.is_some_and(|at| at.elapsed() < Duration::from_secs(2));
+    let mut row_width = 180.0;
+    if self.pending_result.is_some() {
+      row_width += 130.0 + 12.0;
+    }
+    if show_copied {
+      row_width += 8.0 + 52.0;
+    }
+    let row_rect = egui::Rect::from_center_size(button_area.center(), egui::vec2(row_width, 52.0));
+    let mut row_ui = ui.new_child(
+      egui::UiBuilder::new()
+        .max_rect(row_rect)
+        .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
+    if self.pending_result.is_some() {
+      if row_ui
+        .add_sized([130.0, 40.0], egui::Button::new(egui::RichText::new("应用新结果").size(15.0)))
+        .clicked()
+        && let Some(text) = self.pending_result.take()
+      {
+        self.result_text = text;
+        self.result_dirty = false;
+      }
+      row_ui.add_space(12.0);
+    }
+    if row_ui
+      .add_sized([180.0, 52.0], egui::Button::new(egui::RichText::new("复制").size(22.0)))
+      .clicked()
+    {
+      ctx.copy_text(self.result_text.clone());
+      self.copied_at = Some(Instant::now());
+    }
+    if show_copied {
+      row_ui.add_space(8.0);
+      row_ui.colored_label(SUCCESS_COLOR, "已复制");
+    }
+  }
+
+  fn load_path(&mut self, ctx: &egui::Context, path: &Path) {
     match image_source::from_path(path) {
       Ok(image) => self.apply_image(ctx, image),
       Err(error) => self.push_log(format!("{error:#}")),
@@ -263,15 +287,11 @@ impl App {
     self.texture = Some(texture);
     self.image = Some(image);
     self.ocr_state = OcrState::Idle;
+    self.result_text.clear();
+    self.result_dirty = false;
     self.pending_result = None;
+    self.copied_at = None;
     self.start_ocr(ctx);
-  }
-
-  fn clear_image(&mut self) {
-    self.image = None;
-    self.texture = None;
-    self.ocr_state = OcrState::Idle;
-    self.pending_result = None;
   }
 
   fn save_key(&mut self, ctx: &egui::Context, force: bool) {
@@ -308,9 +328,6 @@ impl App {
   }
 
   fn start_ocr(&mut self, ctx: &egui::Context) {
-    if self.is_requesting() {
-      return;
-    }
     let Some(image) = &self.image else {
       self.push_log("请先选择图片");
       self.ocr_state = OcrState::Error;
@@ -391,9 +408,6 @@ impl App {
   }
 
   fn handle_dropped_files(&mut self, ctx: &egui::Context) {
-    if self.is_requesting() {
-      return;
-    }
     let dropped = ctx.input(|input| input.raw.dropped_files.clone());
     if dropped.is_empty() {
       return;
@@ -418,17 +432,28 @@ impl eframe::App for App {
     if self.copied_at.is_some_and(|at| at.elapsed() >= Duration::from_secs(2)) {
       self.copied_at = None;
     }
-    if self.is_requesting() || self.copied_at.is_some() {
+    if self.copied_at.is_some() || self.key_save_due.is_some() {
       ctx.request_repaint_after(Duration::from_millis(100));
     }
 
-    self.key_panel(ctx);
-    egui::CentralPanel::default().show(ctx, |ui| {
-      self.image_section(ctx, ui);
-      ui.add_space(6.0);
-      self.preview(ui);
-      ui.add_space(6.0);
+    let screen = ctx.content_rect();
+    let mid_x = screen.center().x;
+    egui::SidePanel::left("left_panel")
+      .exact_width(mid_x - screen.left())
+      .resizable(false)
+      .show_separator_line(false)
+      .frame(egui::Frame::NONE)
+      .show(ctx, |ui| {
+        self.config_section(ui);
+        self.image_section(ui);
+      });
+    egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx, |ui| {
       self.result_section(ctx, ui);
     });
+
+    let divider_color = ctx.style().visuals.widgets.noninteractive.bg_stroke.color;
+    ctx
+      .layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("center_divider")))
+      .vline(mid_x, screen.y_range(), egui::Stroke::new(1.0_f32, divider_color));
   }
 }
