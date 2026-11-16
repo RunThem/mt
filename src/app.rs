@@ -145,6 +145,8 @@ impl App {
           memory.surrender_focus(focused);
         }
       });
+    } else if self.image_area_active && ui.ctx().input(|input| input.pointer.any_click()) {
+      self.image_area_active = false;
     }
 
     let ctx = ui.ctx().clone();
