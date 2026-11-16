@@ -16,6 +16,8 @@ const BOX_BORDER_WIDTH: f32 = 1.0;
 const TEXT_EDIT_HORIZONTAL_MARGIN: f32 = 8.0;
 /// 顶部复制条的最小高度.
 const MIN_COPY_HEIGHT: f32 = 24.0;
+/// OCR 结果文本框字号. egui 默认 Monospace 为 13.0.
+const RESULT_FONT_SIZE: f32 = 12.0;
 
 /// OCR 单次请求的 UI 状态机. 请求中不允许再次提交.
 enum OcrState {
@@ -215,7 +217,8 @@ impl App {
       return;
     }
 
-    let row_height = ui.text_style_height(&egui::TextStyle::Monospace);
+    let result_font = egui::FontId::monospace(RESULT_FONT_SIZE);
+    let row_height = ui.fonts_mut(|fonts| fonts.row_height(&result_font));
     let rows = ((text_rect.height() - 8.0) / row_height).floor().max(3.0) as usize;
     let mut text_ui = ui.new_child(
       egui::UiBuilder::new()
@@ -235,7 +238,8 @@ impl App {
             .desired_width(f32::INFINITY)
             .desired_rows(rows)
             .hint_text("OCR 结果与日志会显示在这里, 可手动修改后再复制")
-            .code_editor(),
+            .font(result_font)
+            .lock_focus(true),
         );
         if response.changed() {
           self.result_dirty = true;
