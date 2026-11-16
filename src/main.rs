@@ -23,24 +23,17 @@ fn setup_theme(ctx: &egui::Context) {
   ctx.set_visuals(visuals);
 }
 
-/// 加载 Windows 自带中文字体作为 fallback, 避免 UI 中文显示为方框.
+/// 内置 MapleMono 中文字体, 保证 Windows 上中文显示一致.
 fn setup_fonts(ctx: &egui::Context) {
-  const CANDIDATES: &[&str] = &[
-    "C:\\Windows\\Fonts\\msyh.ttc",
-    "C:\\Windows\\Fonts\\msyhbd.ttc",
-    "C:\\Windows\\Fonts\\simhei.ttf",
-    "C:\\Windows\\Fonts\\simsun.ttc",
-  ];
-
-  let Some(bytes) = CANDIDATES.iter().find_map(|path| std::fs::read(path).ok()) else {
-    eprintln!("未找到可用的中文字体, 界面中文可能无法正常显示");
-    return;
-  };
+  const FONT_NAME: &str = "MapleMonoNormalNL-NF-CN";
 
   let mut fonts = FontDefinitions::default();
-  fonts.font_data.insert("cjk".to_string(), Arc::new(FontData::from_owned(bytes)));
+  fonts.font_data.insert(
+    FONT_NAME.to_string(),
+    Arc::new(FontData::from_static(include_bytes!("MapleMonoNormalNL-NF-CN-Bold.ttf"))),
+  );
   for family in [FontFamily::Proportional, FontFamily::Monospace] {
-    fonts.families.entry(family).or_default().push("cjk".to_string());
+    fonts.families.entry(family).or_default().insert(0, FONT_NAME.to_string());
   }
   ctx.set_fonts(fonts);
 }
