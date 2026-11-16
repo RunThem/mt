@@ -242,9 +242,6 @@ impl App {
     if self.pending_result.is_some() {
       row_width += 130.0 + 12.0;
     }
-    if show_copied {
-      row_width += 8.0 + 52.0;
-    }
     let row_rect = egui::Rect::from_center_size(button_area.center(), egui::vec2(row_width, 52.0));
     let mut row_ui = ui.new_child(
       egui::UiBuilder::new()
@@ -262,16 +259,14 @@ impl App {
       }
       row_ui.add_space(12.0);
     }
-    if row_ui
-      .add_sized([180.0, 52.0], egui::Button::new(egui::RichText::new("复制").size(22.0)))
-      .clicked()
-    {
+    let copy_text = if show_copied {
+      egui::RichText::new("已复制").size(22.0).color(SUCCESS_COLOR)
+    } else {
+      egui::RichText::new("复制").size(22.0)
+    };
+    if row_ui.add_sized([180.0, 52.0], egui::Button::new(copy_text)).clicked() {
       ctx.copy_text(self.result_text.clone());
       self.copied_at = Some(Instant::now());
-    }
-    if show_copied {
-      row_ui.add_space(8.0);
-      row_ui.colored_label(SUCCESS_COLOR, "已复制");
     }
   }
 
