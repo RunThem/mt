@@ -222,21 +222,34 @@ impl App {
         .max_rect(text_rect)
         .layout(egui::Layout::top_down(egui::Align::Min)),
     );
-    // 文本框边框常显, 不依赖鼠标 hover.
-    let text_box_border = egui::Stroke::new(BOX_BORDER_WIDTH, BOX_BORDER_COLOR);
-    text_ui.visuals_mut().widgets.inactive.bg_stroke = text_box_border;
-    text_ui.visuals_mut().widgets.hovered.bg_stroke = text_box_border;
-    let response = text_ui.add_sized(
-      [text_rect.width(), text_rect.height()],
-      egui::TextEdit::multiline(&mut self.result_text)
-        .desired_width(f32::INFINITY)
-        .desired_rows(rows)
-        .hint_text("OCR 结果与日志会显示在这里, 可手动修改后再复制")
-        .code_editor(),
-    );
-    if response.changed() {
-      self.result_dirty = true;
-    }
+    // TextEdit 自身没有内部滚动, 只有外层 ScrollArea 才能滚长文本.
+    // 背景与边框改为自绘, 保证内容滚动时文本框外沿始终完整.
+    text_ui.painter().rect_filled(text_rect, 2.0, text_ui.visuals().text_edit_bg_color());
+    let text_response = egui::ScrollArea::vertical()
+      .id_salt("ocr_result_scroll")
+      .auto_shrink([false, false])
+      .show(&mut text_ui, |ui| {
+        let response = ui.add(
+          egui::TextEdit::multiline(&mut self.result_text)
+            .frame(false)
+            .desired_width(f32::INFINITY)
+            .desired_rows(rows)
+            .hint_text("OCR 结果与日志会显示在这里, 可手动修改后再复制")
+            .code_editor(),
+        );
+        if response.changed() {
+          self.result_dirty = true;
+        }
+        response
+      })
+      .inner;
+    // 边框常显, 不依赖鼠标 hover; 聚焦时沿用 TextEdit 的高亮色.
+    let border_stroke = if text_response.has_focus() {
+      text_ui.visuals().selection.stroke
+    } else {
+      egui::Stroke::new(BOX_BORDER_WIDTH, BOX_BORDER_COLOR)
+    };
+    text_ui.painter().rect_stroke(text_rect, 2.0, border_stroke, egui::StrokeKind::Inside);
 
     let show_copied = self.copied_at.is_some_and(|at| at.elapsed() < Duration::from_secs(2));
     let copy_text = if show_copied {
