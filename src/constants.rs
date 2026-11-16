@@ -9,7 +9,8 @@ pub const API_URL: &str = "https://freeocr.ai/api/v1/platform/ocr";
 /// 配置固定保存在 C:\Build, 沿用 ct 的目录约定
 pub const CONFIG_FILE_PATH: &str = "C:\\Build\\mt-config.json";
 
-pub const WINDOW_WIDTH: f32 = 960.0;
+/// 默认宽度: 960 时结果文本框约 457px, 增加约半个文本框宽度后文本框约 577px.
+pub const WINDOW_WIDTH: f32 = 1200.0;
 pub const WINDOW_HEIGHT: f32 = 760.0;
 pub const MIN_WINDOW_WIDTH: f32 = 720.0;
 pub const MIN_WINDOW_HEIGHT: f32 = 560.0;
