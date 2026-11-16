@@ -37,3 +37,7 @@ version = "3.6"
 version = "0.25"
 default-features = false
 features = ["png", "jpeg", "gif", "bmp", "webp", "tiff"]
+
+[target.'cfg(windows)'.dependencies.windows-sys]
+version = "0.61"
+features = ["Win32_UI_Input_KeyboardAndMouse"]

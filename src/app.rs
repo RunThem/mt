@@ -20,7 +20,7 @@ const MIN_COPY_HEIGHT: f32 = 24.0;
 /// OCR 单次请求的 UI 状态机. 请求中不允许再次提交.
 enum OcrState {
   Idle,
-  Requesting { started: Instant },
+  Requesting,
   Done,
   Error,
 }
@@ -36,6 +36,8 @@ pub struct App {
   key_input: String,
   /// 停止输入后延迟保存 API Key
   key_save_due: Option<Instant>,
+  /// Ctrl+V 当前是否按下, 用于边沿触发
+  paste_combo_down: bool,
   /// 当前帧图片区外框尺寸, 用于让 OCR 文本框保持同样大小
   image_area_size: Option<egui::Vec2>,
   image: Option<LoadedImage>,
@@ -66,6 +68,7 @@ impl App {
       config_path: path,
       key_input,
       key_save_due: None,
+      paste_combo_down: false,
       image_area_size: None,
       image: None,
       texture: None,
@@ -166,7 +169,7 @@ impl App {
     } else {
       let color = ui.visuals().weak_text_color();
       let galley = ui.painter().layout(
-        "按 Ctrl+C 读取剪贴板图片\n或从文件管理器拖放图片".to_string(),
+        "按 Ctrl+V 读取剪贴板图片\n或从文件管理器拖放图片".to_string(),
         egui::FontId::proportional(15.0),
         color,
         (rect.width() - 20.0).max(40.0),
@@ -179,9 +182,10 @@ impl App {
       .rect_stroke(rect, 6.0, egui::Stroke::new(BOX_BORDER_WIDTH, BOX_BORDER_COLOR), egui::StrokeKind::Inside);
   }
 
-  fn load_clipboard(&mut self, ctx: &egui::Context) {
-    match image_source::from_clipboard() {
-      Ok(image) => self.apply_image(ctx, image),
+  fn load_clipboard_image(&mut self, ctx: &egui::Context) {
+    match image_source::from_clipboard_if_image() {
+      Ok(Some(image)) => self.apply_image(ctx, image),
+      Ok(None) => {}
       Err(error) => self.push_log(format!("{error:#}")),
     }
   }
@@ -312,7 +316,6 @@ impl App {
       Ok(()) => {
         self.config = config;
         self.key_input = self.config.api_key.clone();
-        self.push_log("API Key 已保存");
         if self.image.is_some() && matches!(self.ocr_state, OcrState::Idle | OcrState::Error) {
           self.start_ocr(ctx);
         }
@@ -336,11 +339,10 @@ impl App {
     }
 
     let filename = image.filename.clone();
-    let upload = OcrUpload::new(image.png.clone(), filename.clone());
-    self.push_log(format!("开始识别: {filename}"));
+    let upload = OcrUpload::new(image.png.clone(), filename);
     let (tx, rx) = mpsc::channel();
     self.rx = Some(rx);
-    self.ocr_state = OcrState::Requesting { started: Instant::now() };
+    self.ocr_state = OcrState::Requesting;
     self.pending_result = None;
 
     let ctx = ctx.clone();
@@ -373,10 +375,6 @@ impl App {
 
     match rx.try_recv() {
       Ok(OcrOutcome::Success(text)) => {
-        let elapsed = match &self.ocr_state {
-          OcrState::Requesting { started } => started.elapsed(),
-          _ => Duration::ZERO,
-        };
         if self.result_text.trim().is_empty() || !self.result_dirty {
           self.result_text = text;
           self.result_dirty = false;
@@ -384,7 +382,6 @@ impl App {
         } else {
           self.pending_result = Some(text);
         }
-        self.push_log(format!("识别完成, 耗时 {:.2} 秒", elapsed.as_secs_f32()));
         self.ocr_state = OcrState::Done;
       }
       Ok(OcrOutcome::Failure(message)) => {
@@ -401,14 +398,20 @@ impl App {
     }
   }
 
-  /// 只要 mt 窗口获得键盘焦点, Ctrl+C 就读取剪贴板图片, 不要求先点击图片区.
-  fn handle_clipboard_shortcut(&mut self, ctx: &egui::Context) {
-    let copy_pressed = ctx.input(|input| input.events.iter().any(|event| matches!(event, egui::Event::Copy)));
-    if copy_pressed {
-      // egui-winit 把 Ctrl+C 转成 Event::Copy; 消费掉, 避免文本框再处理一次.
-      ctx.input_mut(|input| input.events.retain(|event| !matches!(event, egui::Event::Copy)));
-      self.load_clipboard(ctx);
+  /// 只要 mt 窗口获得键盘焦点, Ctrl+V 就读取剪贴板图片, 不要求先点击图片区.
+  fn handle_paste_shortcut(&mut self, ctx: &egui::Context) {
+    let focused = ctx.input(|input| input.focused);
+    if !focused {
+      self.paste_combo_down = false;
+      return;
     }
+
+    let (ctrl_down, v_down) = ctrl_v_down();
+    let combo_down = ctrl_down && v_down;
+    if combo_down && !self.paste_combo_down {
+      self.load_clipboard_image(ctx);
+    }
+    self.paste_combo_down = combo_down;
   }
 
   fn handle_dropped_files(&mut self, ctx: &egui::Context) {
@@ -420,13 +423,24 @@ impl App {
 
     if let Some(path) = dropped.iter().find_map(|file| file.path.as_deref()) {
       self.load_path(ctx, path);
-      if dropped.len() > 1 {
-        self.push_log("一次只处理第一张图片");
-      }
     } else {
       self.push_log("拖放的文件没有本地路径");
     }
   }
+}
+
+/// 读取当前 Ctrl 与 V 的物理按键状态.
+#[cfg(target_os = "windows")]
+fn ctrl_v_down() -> (bool, bool) {
+  use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_CONTROL, VK_V};
+
+  // SAFETY: GetAsyncKeyState 只读取全局按键状态, 没有内存安全风险.
+  unsafe { (GetAsyncKeyState(VK_CONTROL as i32) < 0, GetAsyncKeyState(VK_V as i32) < 0) }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn ctrl_v_down() -> (bool, bool) {
+  (false, false)
 }
 
 impl eframe::App for App {
@@ -436,7 +450,7 @@ impl eframe::App for App {
 
   fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
     self.poll_ocr();
-    self.handle_clipboard_shortcut(ctx);
+    self.handle_paste_shortcut(ctx);
     self.handle_dropped_files(ctx);
 
     if self.copied_at.is_some_and(|at| at.elapsed() >= Duration::from_secs(2)) {

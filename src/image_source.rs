@@ -32,17 +32,17 @@ pub fn from_path(path: &Path) -> Result<LoadedImage> {
   from_encoded_bytes(&bytes, filename)
 }
 
-/// 从剪贴板读取图片. 只有文本或空剪贴板时返回明确错误.
-pub fn from_clipboard() -> Result<LoadedImage> {
+/// 尝试从剪贴板读取图片. 只有文本或空剪贴板时返回 `Ok(None)`, 让文本粘贴照常进行.
+pub fn from_clipboard_if_image() -> Result<Option<LoadedImage>> {
   let mut clipboard = arboard::Clipboard::new().context("打开剪贴板失败")?;
   let image = match clipboard.get_image() {
     Ok(image) => image,
-    Err(arboard::Error::ContentNotAvailable) => return Err(anyhow!("剪贴板中没有图片")),
+    Err(arboard::Error::ContentNotAvailable) => return Ok(None),
     Err(error) => return Err(anyhow!("读取剪贴板图片失败: {error}")),
   };
 
-  let rgba = RgbaImage::from_raw(image.width as u32, image.height as u32, image.bytes.into_owned()).context("剪贴板图片数据尺寸不一致")?;
-  normalize(rgba, "clipboard.png")
+  let rgba = RgbaImage::from_raw(image.width as u32, image.height as u32, image.bytes.into_owned()).context("剪贴板图片数据不一致")?;
+  Ok(Some(normalize(rgba, "clipboard.png")?))
 }
 
 /// 解码任意受支持格式, 统一转为 RGBA 后重新编码为 PNG.
