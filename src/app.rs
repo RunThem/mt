@@ -235,6 +235,10 @@ impl App {
         .max_rect(text_rect)
         .layout(egui::Layout::top_down(egui::Align::Min)),
     );
+    // 文本框边框常显, 不依赖鼠标 hover.
+    let text_box_border = egui::Stroke::new(1.0_f32, Color32::from_gray(160));
+    text_ui.visuals_mut().widgets.inactive.bg_stroke = text_box_border;
+    text_ui.visuals_mut().widgets.hovered.bg_stroke = text_box_border;
     let response = text_ui.add_sized(
       [text_rect.width(), text_rect.height()],
       egui::TextEdit::multiline(&mut self.result_text)
