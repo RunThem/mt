@@ -29,7 +29,8 @@ pub struct App {
   config: Config,
   config_path: PathBuf,
   key_input: String,
-  show_key: bool,
+  /// 停止输入后延迟保存 API Key
+  key_save_due: Option<Instant>,
   image: Option<LoadedImage>,
   texture: Option<TextureHandle>,
   texture_seq: u64,
@@ -57,7 +58,7 @@ impl App {
       config,
       config_path: path,
       key_input,
-      show_key: false,
+      key_save_due: None,
       image: None,
       texture: None,
       texture_seq: 0,
@@ -87,33 +88,39 @@ impl App {
   }
 
   fn key_panel(&mut self, ctx: &egui::Context) {
+    let mut commit_now = false;
     egui::TopBottomPanel::top("api_key_panel").show(ctx, |ui| {
-      ui.add_space(8.0);
+      ui.add_space(6.0);
       ui.horizontal(|ui| {
         ui.label("API Key:");
-        ui.add(
+        let response = ui.add(
           egui::TextEdit::singleline(&mut self.key_input)
-            .password(!self.show_key)
+            .password(true)
             .hint_text("focr_...")
-            .desired_width(380.0),
+            .desired_width(ui.available_width()),
         );
-        if ui.button("保存").clicked() {
-          self.save_config();
+        if response.changed() {
+          self.key_save_due = Some(Instant::now() + Duration::from_millis(600));
+          ctx.request_repaint_after(Duration::from_millis(600));
         }
-        ui.checkbox(&mut self.show_key, "显示");
-        ui.add_space(8.0);
-        if self.config.is_configured() {
-          ui.colored_label(SUCCESS_COLOR, "已配置");
-        } else {
-          ui.label(egui::RichText::new("未配置").weak());
-        }
-        if self.key_input.trim() != self.config.api_key.as_str() {
-          ui.colored_label(WARN_COLOR, "未保存");
+        if response.lost_focus() {
+          commit_now = true;
         }
       });
-
-      ui.add_space(8.0);
+      ui.add_space(6.0);
     });
+    self.flush_key_save(commit_now);
+  }
+
+  fn flush_key_save(&mut self, force: bool) {
+    if !force {
+      match self.key_save_due {
+        Some(due) if Instant::now() >= due => {}
+        _ => return,
+      }
+    }
+    self.key_save_due = None;
+    self.save_key(force);
   }
 
   fn image_section(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
@@ -266,14 +273,21 @@ impl App {
     self.pending_result = None;
   }
 
-  fn save_config(&mut self) {
+  fn save_key(&mut self, force: bool) {
     let key = self.key_input.trim().to_string();
+    if key == self.config.api_key {
+      return;
+    }
     if key.is_empty() {
-      self.push_log("API Key 不能为空");
+      if force {
+        self.push_log("API Key 不能为空");
+      }
       return;
     }
     if !key.starts_with(API_KEY_PREFIX) {
-      self.push_log(format!("API Key 格式无效, 应以 {API_KEY_PREFIX} 开头"));
+      if force {
+        self.push_log(format!("API Key 格式无效, 应以 {API_KEY_PREFIX} 开头"));
+      }
       return;
     }
 

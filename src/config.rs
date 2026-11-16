@@ -32,10 +32,6 @@ impl Config {
     fs::write(path, content).with_context(|| format!("写入配置文件 {} 失败", path.display()))?;
     Ok(())
   }
-
-  pub fn is_configured(&self) -> bool {
-    !self.api_key.trim().is_empty()
-  }
 }
 
 /// 默认配置路径
@@ -61,20 +57,13 @@ mod tests {
   fn missing_field_uses_default() {
     let config: Config = serde_json::from_str("{}").unwrap();
     assert_eq!(config, Config::default());
-    assert!(!config.is_configured());
+    assert!(config.api_key.is_empty());
   }
 
   #[test]
   fn unknown_fields_are_tolerated() {
     let config: Config = serde_json::from_str(r#"{"api_key":"focr_x","legacy_field":42}"#).unwrap();
     assert_eq!(config.api_key, "focr_x");
-    assert!(config.is_configured());
-  }
-
-  #[test]
-  fn blank_key_is_not_configured() {
-    let config = Config { api_key: "   ".to_string() };
-    assert!(!config.is_configured());
   }
 
   #[test]
