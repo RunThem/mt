@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::fmt;
+use std::sync::Once;
 
 use nyquest::blocking::{Body, Part, PartBody, Request};
 use nyquest::{BlockingClient, ClientBuilder};
@@ -183,8 +184,12 @@ pub struct OcrClient {
   client: BlockingClient,
 }
 
+/// nyquest 后端只允许注册一次; GUI 与测试都通过这里完成注册.
+static REGISTER_BACKEND: Once = Once::new();
+
 impl OcrClient {
   pub fn new() -> Result<Self, OcrError> {
+    REGISTER_BACKEND.call_once(nyquest_preset::register);
     let client = ClientBuilder::default()
       .request_timeout(REQUEST_TIMEOUT)
       .build_blocking()

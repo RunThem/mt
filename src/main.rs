@@ -34,8 +34,6 @@ fn setup_fonts(ctx: &egui::Context) {
 }
 
 fn main() {
-  nyquest_preset::register();
-
   let options = eframe::NativeOptions {
     viewport: ViewportBuilder::default()
       .with_inner_size([constants::WINDOW_WIDTH, constants::WINDOW_HEIGHT])
