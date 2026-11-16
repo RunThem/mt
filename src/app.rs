@@ -10,15 +10,14 @@ use crate::image_source::{self, LoadedImage};
 use crate::ocr::{self, OcrClient, OcrUpload};
 
 const SUCCESS_COLOR: Color32 = Color32::from_rgb(0x2e, 0x7d, 0x32);
-const ERROR_COLOR: Color32 = Color32::from_rgb(0xc6, 0x28, 0x28);
 const WARN_COLOR: Color32 = Color32::from_rgb(0xb2, 0x6a, 0x00);
 
 /// OCR 单次请求的 UI 状态机. 请求中不允许再次提交.
 enum OcrState {
   Idle,
   Requesting { started: Instant },
-  Done { elapsed: Duration },
-  Error(String),
+  Done,
+  Error,
 }
 
 enum OcrOutcome {
@@ -26,33 +25,11 @@ enum OcrOutcome {
   Failure(String),
 }
 
-struct Notice {
-  text: String,
-  error: bool,
-}
-
-impl Notice {
-  fn info(text: impl Into<String>) -> Self {
-    Self {
-      text: text.into(),
-      error: false,
-    }
-  }
-
-  fn error(text: impl Into<String>) -> Self {
-    Self {
-      text: text.into(),
-      error: true,
-    }
-  }
-}
-
 pub struct App {
   config: Config,
   config_path: PathBuf,
   key_input: String,
   show_key: bool,
-  notice: Option<Notice>,
   image: Option<LoadedImage>,
   texture: Option<TextureHandle>,
   texture_seq: u64,
@@ -69,19 +46,18 @@ pub struct App {
 impl App {
   pub fn new() -> Self {
     let path = config_path().to_path_buf();
-    let (config, notice) = match Config::load(&path) {
+    let (config, startup_log) = match Config::load(&path) {
       Ok(config) => (config, None),
-      Err(_) if !path.exists() => (Config::default(), Some(Notice::info("未找到配置文件, 已使用默认配置"))),
-      Err(error) => (Config::default(), Some(Notice::error(format!("读取配置失败, 已使用默认配置: {error:#}")))),
+      Err(_) if !path.exists() => (Config::default(), Some("未找到配置文件, 已使用默认配置".to_string())),
+      Err(error) => (Config::default(), Some(format!("读取配置失败, 已使用默认配置: {error:#}"))),
     };
     let key_input = config.api_key.clone();
 
-    Self {
+    let mut app = Self {
       config,
       config_path: path,
       key_input,
       show_key: false,
-      notice,
       image: None,
       texture: None,
       texture_seq: 0,
@@ -91,7 +67,19 @@ impl App {
       result_dirty: false,
       pending_result: None,
       copied_at: None,
+    };
+    if let Some(message) = startup_log {
+      app.push_log(message);
     }
+    app
+  }
+
+  fn push_log(&mut self, message: impl Into<String>) {
+    if !self.result_text.is_empty() && !self.result_text.ends_with('\n') {
+      self.result_text.push('\n');
+    }
+    self.result_text.push_str("[日志] ");
+    self.result_text.push_str(&message.into());
   }
 
   fn is_requesting(&self) -> bool {
@@ -124,10 +112,6 @@ impl App {
         }
       });
 
-      if let Some(notice) = &self.notice {
-        ui.add_space(2.0);
-        ui.colored_label(if notice.error { ERROR_COLOR } else { SUCCESS_COLOR }, &notice.text);
-      }
       ui.add_space(8.0);
     });
   }
@@ -182,10 +166,6 @@ impl App {
       if ui.add_enabled(can_ocr, egui::Button::new("开始 OCR")).clicked() {
         self.start_ocr(ctx);
       }
-      if self.is_requesting() {
-        ui.spinner();
-      }
-      self.status_ui(ui);
 
       ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         if ui.add_enabled(!self.result_text.is_empty(), egui::Button::new("复制")).clicked() {
@@ -239,27 +219,6 @@ impl App {
     });
   }
 
-  fn status_ui(&self, ui: &mut egui::Ui) {
-    match &self.ocr_state {
-      OcrState::Idle => {
-        if self.image.is_some() {
-          ui.label("就绪");
-        } else {
-          ui.label("请先选择图片");
-        }
-      }
-      OcrState::Requesting { started } => {
-        ui.label(format!("识别中... {:.1} 秒", started.elapsed().as_secs_f32()));
-      }
-      OcrState::Done { elapsed } => {
-        ui.colored_label(SUCCESS_COLOR, format!("识别完成, 耗时 {:.2} 秒", elapsed.as_secs_f32()));
-      }
-      OcrState::Error(message) => {
-        ui.colored_label(ERROR_COLOR, format!("识别失败: {message}"));
-      }
-    }
-  }
-
   fn pick_file(&mut self, ctx: &egui::Context) {
     let Some(path) = rfd::FileDialog::new()
       .add_filter("图片", &["png", "jpg", "jpeg", "bmp", "gif", "webp", "tif", "tiff"])
@@ -276,7 +235,7 @@ impl App {
     }
     match image_source::from_clipboard() {
       Ok(image) => self.apply_image(ctx, image),
-      Err(error) => self.notice = Some(Notice::error(format!("{error:#}"))),
+      Err(error) => self.push_log(format!("{error:#}")),
     }
   }
 
@@ -286,7 +245,7 @@ impl App {
     }
     match image_source::from_path(path) {
       Ok(image) => self.apply_image(ctx, image),
-      Err(error) => self.notice = Some(Notice::error(format!("{error:#}"))),
+      Err(error) => self.push_log(format!("{error:#}")),
     }
   }
 
@@ -298,7 +257,6 @@ impl App {
     self.image = Some(image);
     self.ocr_state = OcrState::Idle;
     self.pending_result = None;
-    self.notice = None;
   }
 
   fn clear_image(&mut self) {
@@ -311,11 +269,11 @@ impl App {
   fn save_config(&mut self) {
     let key = self.key_input.trim().to_string();
     if key.is_empty() {
-      self.notice = Some(Notice::error("API Key 不能为空"));
+      self.push_log("API Key 不能为空");
       return;
     }
     if !key.starts_with(API_KEY_PREFIX) {
-      self.notice = Some(Notice::error(format!("API Key 格式无效, 应以 {API_KEY_PREFIX} 开头")));
+      self.push_log(format!("API Key 格式无效, 应以 {API_KEY_PREFIX} 开头"));
       return;
     }
 
@@ -325,9 +283,9 @@ impl App {
       Ok(()) => {
         self.config = config;
         self.key_input = self.config.api_key.clone();
-        self.notice = Some(Notice::info("API Key 已保存"));
+        self.push_log("API Key 已保存");
       }
-      Err(error) => self.notice = Some(Notice::error(format!("保存配置失败: {error:#}"))),
+      Err(error) => self.push_log(format!("保存配置失败: {error:#}")),
     }
   }
 
@@ -336,17 +294,21 @@ impl App {
       return;
     }
     let Some(image) = &self.image else {
-      self.ocr_state = OcrState::Error("请先选择图片".to_string());
+      self.push_log("请先选择图片");
+      self.ocr_state = OcrState::Error;
       return;
     };
 
     let api_key = self.key_input.trim().to_string();
     if let Err(error) = ocr::validate_api_key(&api_key) {
-      self.ocr_state = OcrState::Error(error.user_message());
+      self.push_log(error.user_message());
+      self.ocr_state = OcrState::Error;
       return;
     }
 
-    let upload = OcrUpload::new(image.png.clone(), image.filename.clone());
+    let filename = image.filename.clone();
+    let upload = OcrUpload::new(image.png.clone(), filename.clone());
+    self.push_log(format!("开始识别: {filename}"));
     let (tx, rx) = mpsc::channel();
     self.rx = Some(rx);
     self.ocr_state = OcrState::Requesting { started: Instant::now() };
@@ -370,7 +332,8 @@ impl App {
 
     if let Err(error) = spawned {
       self.rx = None;
-      self.ocr_state = OcrState::Error(format!("无法启动 OCR 线程: {error}"));
+      self.push_log(format!("无法启动 OCR 线程: {error}"));
+      self.ocr_state = OcrState::Error;
     }
   }
 
@@ -392,16 +355,19 @@ impl App {
         } else {
           self.pending_result = Some(text);
         }
-        self.ocr_state = OcrState::Done { elapsed };
+        self.push_log(format!("识别完成, 耗时 {:.2} 秒", elapsed.as_secs_f32()));
+        self.ocr_state = OcrState::Done;
       }
       Ok(OcrOutcome::Failure(message)) => {
-        self.ocr_state = OcrState::Error(message);
+        self.push_log(format!("识别失败: {message}"));
+        self.ocr_state = OcrState::Error;
       }
       Err(TryRecvError::Empty) => {
         self.rx = Some(rx);
       }
       Err(TryRecvError::Disconnected) => {
-        self.ocr_state = OcrState::Error("OCR 线程意外结束".to_string());
+        self.push_log("OCR 线程意外结束");
+        self.ocr_state = OcrState::Error;
       }
     }
   }
@@ -418,10 +384,10 @@ impl App {
     if let Some(path) = dropped.iter().find_map(|file| file.path.as_deref()) {
       self.load_path(ctx, path);
       if dropped.len() > 1 {
-        self.notice = Some(Notice::info("一次只处理第一张图片"));
+        self.push_log("一次只处理第一张图片");
       }
     } else {
-      self.notice = Some(Notice::error("拖放的文件没有本地路径"));
+      self.push_log("拖放的文件没有本地路径");
     }
   }
 }
