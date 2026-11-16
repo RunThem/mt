@@ -416,6 +416,10 @@ impl App {
 }
 
 impl eframe::App for App {
+  fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+    egui::Color32::WHITE.to_normalized_gamma_f32()
+  }
+
   fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
     self.poll_ocr();
     self.handle_dropped_files(ctx);
@@ -446,5 +450,17 @@ impl eframe::App for App {
     ctx
       .layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("center_divider")))
       .vline(mid_x, screen.y_range(), egui::Stroke::new(1.0_f32, divider_color));
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn clear_color_is_white() {
+    let app = App::new();
+    let clear = eframe::App::clear_color(&app, &egui::Visuals::dark());
+    assert_eq!(clear, Color32::WHITE.to_normalized_gamma_f32());
   }
 }

@@ -11,6 +11,18 @@ mod constants;
 mod image_source;
 mod ocr;
 
+/// 强制浅色主题, 并把面板/输入框底色统一为白色.
+fn setup_theme(ctx: &egui::Context) {
+  ctx.set_theme(egui::Theme::Light);
+
+  let mut visuals = egui::Visuals::light();
+  visuals.panel_fill = egui::Color32::WHITE;
+  visuals.window_fill = egui::Color32::WHITE;
+  visuals.extreme_bg_color = egui::Color32::WHITE;
+  visuals.faint_bg_color = egui::Color32::from_gray(248);
+  ctx.set_visuals(visuals);
+}
+
 /// 加载 Windows 自带中文字体作为 fallback, 避免 UI 中文显示为方框.
 fn setup_fonts(ctx: &egui::Context) {
   const CANDIDATES: &[&str] = &[
@@ -45,10 +57,27 @@ fn main() {
     constants::APP_TITLE,
     options,
     Box::new(|cc| {
+      setup_theme(&cc.egui_ctx);
       setup_fonts(&cc.egui_ctx);
       Ok(Box::new(app::App::new()))
     }),
   ) {
     eprintln!("启动失败: {error}");
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn theme_uses_white_background() {
+    let ctx = egui::Context::default();
+    setup_theme(&ctx);
+
+    let visuals = ctx.style().visuals.clone();
+    assert_eq!(visuals.panel_fill, egui::Color32::WHITE);
+    assert_eq!(visuals.window_fill, egui::Color32::WHITE);
+    assert_eq!(visuals.extreme_bg_color, egui::Color32::WHITE);
   }
 }
