@@ -2,11 +2,11 @@
 
 ## 项目目标
 
-`mt` 是一个 Windows 优先的 Rust 桌面 GUI, 用于调用 freeocr.ai 的 OCR API, 把图片中的文字提取为可编辑文本. 当前仓库只有脚手架(`src/main.rs` 为 `Hello, world!`), 功能从零实现.
+`mt` 是一个 Windows 优先的 Rust 桌面 GUI, 用于调用 freeocr.ai 的 OCR API, 把图片中的文字提取为可编辑文本.
 
 三大功能:
-1. 配置 API Key: 输入, 保存, 掩码显示, 支持后续修改.
-2. 图片预览: 打开本地图片, 从剪贴板粘贴图片, 支持拖放; 显示缩略图, 文件名, 尺寸.
+1. 配置 API Key: 输入, 自动保存, 掩码显示, 支持后续修改.
+2. 图片预览: 点击图片区后按 Ctrl+C 读取剪贴板图片, 支持拖放; 显示缩略图, 文件名, 尺寸.
 3. OCR: 上传图片到 freeocr.ai, 展示返回文本, 提供一键复制按钮.
 
 ## 全局约定
@@ -38,7 +38,6 @@ cargo test             # 单元测试
 - **GUI**: `eframe` / `egui` 0.33.3. 入口用 `eframe::run_native`, 事件循环必须在主线程.
 - **HTTP**: `nyquest` + `nyquest-preset`, 使用 `BlockingClient`; 需开启 `multipart` feature(`features = ["json", "blocking-stream", "multipart"]`), 因为 OCR 接口是 `multipart/form-data`.
 - **JSON**: `serde` + `serde_json`; **错误**: `anyhow`.
-- **文件选择**: `rfd`.
 - **剪贴板图片**: `arboard`. eframe / egui 原生只处理文本剪贴板, 读取剪贴板图片必须用 `arboard::Clipboard::get_image`.
 - **图片解码**: `image` crate. 上传前统一解码为 RGBA 并重新编码为 PNG, 避免源文件格式或剪贴板 BGRA / RGBA 差异.
 - `libu` 是 ct 的私有依赖, 本项目管理简单, 默认不引入.
@@ -70,25 +69,28 @@ src/
 ```
 
 - **UI 线程不得阻塞**: OCR 请求放到 `std::thread` 后台线程, 通过 `std::sync::mpsc` 把 `Result<String>` 传回 UI; 线程结束时调用 `ctx.request_repaint()`.
-- OCR 状态只允许一条状态机: `Idle -> Requesting -> Done` 或 `Error`. 请求中禁用 OCR 按钮, 防止重复提交.
+- OCR 状态只允许一条状态机: `Idle -> Requesting -> Done` 或 `Error`. 图片加载后自动开始 OCR; 新图片覆盖旧图并开始新的请求, 旧请求结果直接丢弃.
 - `ocr.rs` 保持纯函数友好: 请求构造和响应解析可单测, 网络发送与解析分离.
-- 配置模型用 `serde` 派生, 未知字段容忍; 读取失败时回退默认值并在 UI 提示, 不要 panic.
+- 配置模型用 `serde` 派生, 未知字段容忍; 读取失败时回退默认值并写入结果日志, 不要 panic.
 - 配置路径统一放 `constants.rs`. 默认 `C:\Build\mt-config.json`, 沿用 ct 的 `C:\Build` 目录约定.
-- API Key 明文存本地 JSON 可接受; UI 用密码框, 日志中只允许出现 `已配置` / `未配置`, 不打印 Key 内容.
+- API Key 明文存本地 JSON 可接受; UI 用密码框, 日志与结果文本中不要打印 Key 内容.
 
 ## UI 行为
 
-- 顶部: API Key 输入框(密码模式)和保存按钮, 显示 `已配置` / `未配置`.
-- 图片区: `打开图片` 按钮(`rfd`), `粘贴图片` 按钮(`arboard`), 支持窗口拖放(`ctx.input(|i| i.raw.dropped_files)`).
-- 粘贴按钮只读取剪贴板图片; 剪贴板为空或只有文本时, 提示 `剪贴板中没有图片`.
-- 预览使用 `ctx.load_texture` 上传为 `TextureHandle`, 按可用区域等比缩放; 大图先缩放到最长边 2048 再上传, 与 API 内部尺寸一致.
-- 结果区: 只读多行文本, 提供 `复制` 按钮, 用 egui 自带剪贴板接口(如 `ctx.copy_text`)复制全文, 不要为文本复制引入 arboard.
+- 窗口用垂直中线分为左右两半, 中间画一条分隔线.
+- 左上方配置区很小: 只有 API Key 密码框, 输入有效 Key 后自动保存; 不提供保存 / 显示 / 状态控件.
+- 左下方图片区占左侧大部分空间, 不提供任何按钮. 点击图片区后按 Ctrl+C 读取剪贴板图片; 支持从文件管理器拖放(`ctx.input(|i| i.raw.dropped_files)`).
+- 图片加载后自动开始 OCR, 无需手动触发; 新的 Ctrl+C 或拖放会覆盖旧图并重新识别.
+- 图片区与右侧结果区都保持 3mm 窗口边距; 预览使用 `ctx.load_texture` 上传为 `TextureHandle`, 按可用区域等比缩放; 大图先缩放到最长边 2048 再上传, 与 API 内部尺寸一致.
+- 右半区是 OCR 结果区: 可编辑多行文本占满结果区, 底部留出空白并居中放一个大号 `复制` 按钮, 用 egui 自带剪贴板接口(如 `ctx.copy_text`)复制全文, 不要为文本复制引入 arboard.
+- 剪贴板为空或只有文本时, 把 `剪贴板中没有图片` 写入结果文本.
+- 状态提示与错误都写入结果文本, 日志行以 `[日志]` 开头.
 - 用户可见错误用中文: 401 `API Key 无效`, 402 `账户余额不足`, 429 `请求过于频繁, 请稍后重试`, 500 `服务端处理失败`, 网络错误 `网络请求失败, 请检查连接`.
-- OCR 成功后显示耗时或状态提示, 不做自动覆盖用户已编辑的内容; 结果区允许用户手动修改后再复制.
+- OCR 成功后写入耗时日志; 请求期间用户手动修改的结果不会被自动覆盖, 可点击 `应用新结果`.
 
 ## 平台与陷阱
 
-- 目标平台 Windows 10 / 11, 开发机为 win32. 文件对话框, 剪贴板, 拖放都要按 Windows 行为验证.
+- 目标平台 Windows 10 / 11, 开发机为 win32. 剪贴板与拖放都要按 Windows 行为验证.
 - 本机与 ct 相同, 存在安全软件压缩子进程栈的问题. 建议复制 ct 的 `.cargo/config.toml`:
   - `[env] RUST_MIN_STACK = 134217728`(`force = true`), 防止 rustc / clippy 栈溢出 `0xc00000fd`.
   - `[target.x86_64-pc-windows-gnu] rustflags = ["-C", "link-args=-Wl,--stack,134217728"]`, 防止 GUI 运行时栈溢出.
