@@ -3,4 +3,40 @@ name = "mt"
 version = "0.1.0"
 edition = "2024"
 
-[dependencies]
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+strip = true
+
+[dependencies.anyhow]
+version = "1.0.100"
+
+[dependencies.eframe]
+version = "0.33.3"
+
+[dependencies.serde]
+version = "1.0.228"
+features = ["derive"]
+
+[dependencies.serde_json]
+version = "1.0.149"
+
+[dependencies.nyquest]
+version = "0.4.0"
+features = ["json", "blocking-stream", "multipart"]
+
+[dependencies.nyquest-preset]
+version = "0.4.0"
+features = ["blocking-stream", "multipart"]
+
+[dependencies.rfd]
+version = "0.15"
+
+[dependencies.arboard]
+version = "3.6"
+
+[dependencies.image]
+version = "0.25"
+default-features = false
+features = ["png", "jpeg", "gif", "bmp", "webp", "tiff"]

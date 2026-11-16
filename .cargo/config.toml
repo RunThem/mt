@@ -1,0 +1,11 @@
+# 本机安全软件会压缩 cargo 派生进程的栈(导致 rustc/clippy-driver 栈溢出 0xc00000fd).
+# 通过 [env] 让 cargo 为所有子进程设置 RUST_MIN_STACK, 规避该问题.
+# force = true: 安全软件可能已在环境里注入了较小的 RUST_MIN_STACK, 必须强制覆盖.
+[env]
+RUST_MIN_STACK = { value = "134217728", force = true }
+
+# 运行时栈溢出根治: 安全软件压缩 cargo 派生 app 的栈, 拖动等 UI 交互时 0xc00000fd.
+# 通过链接器把 exe 的 PE 栈保留大小设为 128MB -> 主线程栈与启动方式无关(双击/with-env/cargo run 均免疫).
+# 注意: winit 要求事件循环在主线程, 不能用子线程大栈方案.
+[target.x86_64-pc-windows-gnu]
+rustflags = ["-C", "link-args=-Wl,--stack,134217728"]
