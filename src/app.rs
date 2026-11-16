@@ -12,6 +12,8 @@ use crate::ocr::{self, OcrClient, OcrUpload};
 const SUCCESS_COLOR: Color32 = Color32::from_rgb(0x2e, 0x7d, 0x32);
 /// TextEdit 默认左右内边距之和, 用于让输入框外沿精确落在 3mm 边距上.
 const TEXT_EDIT_HORIZONTAL_MARGIN: f32 = 8.0;
+/// 顶部复制条的最小高度.
+const MIN_COPY_HEIGHT: f32 = 24.0;
 
 /// OCR 单次请求的 UI 状态机. 请求中不允许再次提交.
 enum OcrState {
@@ -32,8 +34,10 @@ pub struct App {
   key_input: String,
   /// 停止输入后延迟保存 API Key
   key_save_due: Option<Instant>,
-  /// 图片区获得焦点后, Ctrl+C / Ctrl+V 读取剪贴板图片
+  /// 图片区获得焦点后, Ctrl+C 读取剪贴板图片
   image_area_active: bool,
+  /// 当前帧图片区外框尺寸, 用于让 OCR 文本框保持同样大小
+  image_area_size: Option<egui::Vec2>,
   image: Option<LoadedImage>,
   texture: Option<TextureHandle>,
   texture_seq: u64,
@@ -63,6 +67,7 @@ impl App {
       key_input,
       key_save_due: None,
       image_area_active: false,
+      image_area_size: None,
       image: None,
       texture: None,
       texture_seq: 0,
@@ -139,6 +144,7 @@ impl App {
     if rect.width() < 1.0 || rect.height() < 1.0 {
       return;
     }
+    self.image_area_size = Some(rect.size());
 
     let response = ui.interact(rect, ui.id().with("image_area"), egui::Sense::click());
     if response.clicked() {
@@ -215,19 +221,24 @@ impl App {
       return;
     }
 
-    let copy_height = 52.0;
-    let mut row_width = 180.0;
-    if self.pending_result.is_some() {
-      row_width += 130.0 + 12.0;
-    }
-    let row_rect = egui::Rect::from_min_size(
-      egui::pos2(area.center().x - row_width / 2.0, area.max.y - copy_height),
-      egui::vec2(row_width, copy_height),
+    // 文本框与图片区外框同尺寸; 复制按钮占据顶部剩余高度.
+    let fallback_size = egui::vec2(area.width(), (area.height() - margin - MIN_COPY_HEIGHT).max(1.0));
+    let image_size = self.image_area_size.unwrap_or(fallback_size);
+    let text_width = image_size.x.min(area.width());
+    let max_text_height = (area.height() - margin - MIN_COPY_HEIGHT).max(1.0);
+    let text_height = image_size.y.min(max_text_height);
+    let copy_height = (area.height() - margin - text_height).max(1.0);
+    let content_left = area.center().x - text_width / 2.0;
+
+    let copy_rect = egui::Rect::from_min_size(egui::pos2(content_left, area.top()), egui::vec2(text_width, copy_height));
+    let text_rect = egui::Rect::from_min_max(
+      egui::pos2(content_left, copy_rect.bottom() + margin),
+      egui::pos2(content_left + text_width, area.bottom()),
     );
-    let text_rect = egui::Rect::from_min_max(area.min, egui::pos2(area.max.x, row_rect.min.y - margin));
     if text_rect.width() < 1.0 || text_rect.height() < 1.0 {
       return;
     }
+
     let row_height = ui.text_style_height(&egui::TextStyle::Monospace);
     let rows = ((text_rect.height() - 8.0) / row_height).floor().max(3.0) as usize;
     let mut text_ui = ui.new_child(
@@ -255,28 +266,39 @@ impl App {
     }
 
     let show_copied = self.copied_at.is_some_and(|at| at.elapsed() < Duration::from_secs(2));
-    let mut row_ui = ui.new_child(
+    let copy_text = if show_copied {
+      egui::RichText::new("已复制").size(15.0).color(SUCCESS_COLOR)
+    } else {
+      egui::RichText::new("复制").size(15.0)
+    };
+    let mut copy_ui = ui.new_child(
       egui::UiBuilder::new()
-        .max_rect(row_rect)
+        .max_rect(copy_rect)
         .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
     if self.pending_result.is_some() {
-      if row_ui
-        .add_sized([130.0, 40.0], egui::Button::new(egui::RichText::new("应用新结果").size(15.0)))
+      let apply_width = 110.0;
+      if copy_ui
+        .add_sized(
+          [apply_width, copy_height],
+          egui::Button::new(egui::RichText::new("应用新结果").size(13.0)),
+        )
         .clicked()
         && let Some(text) = self.pending_result.take()
       {
         self.result_text = text;
         self.result_dirty = false;
       }
-      row_ui.add_space(12.0);
-    }
-    let copy_text = if show_copied {
-      egui::RichText::new("已复制").size(22.0).color(SUCCESS_COLOR)
-    } else {
-      egui::RichText::new("复制").size(22.0)
-    };
-    if row_ui.add_sized([180.0, 52.0], egui::Button::new(copy_text)).clicked() {
+      copy_ui.add_space(margin);
+      let copy_width = (copy_rect.width() - apply_width - margin).max(80.0);
+      if copy_ui.add_sized([copy_width, copy_height], egui::Button::new(copy_text)).clicked() {
+        ctx.copy_text(self.result_text.clone());
+        self.copied_at = Some(Instant::now());
+      }
+    } else if copy_ui
+      .add_sized([copy_rect.width(), copy_height], egui::Button::new(copy_text))
+      .clicked()
+    {
       ctx.copy_text(self.result_text.clone());
       self.copied_at = Some(Instant::now());
     }
