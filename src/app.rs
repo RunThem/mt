@@ -10,6 +10,8 @@ use crate::image_source::{self, LoadedImage};
 use crate::ocr::{self, OcrClient, OcrUpload};
 
 const SUCCESS_COLOR: Color32 = Color32::from_rgb(0x2e, 0x7d, 0x32);
+/// TextEdit 默认左右内边距之和, 用于让输入框外沿精确落在 3mm 边距上.
+const TEXT_EDIT_HORIZONTAL_MARGIN: f32 = 8.0;
 
 /// OCR 单次请求的 UI 状态机. 请求中不允许再次提交.
 enum OcrState {
@@ -96,7 +98,8 @@ impl App {
         egui::TextEdit::singleline(&mut self.key_input)
           .password(true)
           .hint_text("focr_...")
-          .desired_width((ui.available_width() - margin).max(80.0)),
+          .margin(egui::Margin::symmetric(4, 2))
+          .desired_width((ui.available_width() - margin - TEXT_EDIT_HORIZONTAL_MARGIN).max(80.0)),
       );
       if response.changed() {
         self.key_save_due = Some(Instant::now() + Duration::from_millis(600));
@@ -212,8 +215,19 @@ impl App {
       return;
     }
 
-    let bottom_height = (area.height() * 0.18).clamp(90.0, 140.0);
-    let text_rect = egui::Rect::from_min_max(area.min, egui::pos2(area.max.x, area.max.y - bottom_height));
+    let copy_height = 52.0;
+    let mut row_width = 180.0;
+    if self.pending_result.is_some() {
+      row_width += 130.0 + 12.0;
+    }
+    let row_rect = egui::Rect::from_min_size(
+      egui::pos2(area.center().x - row_width / 2.0, area.max.y - copy_height),
+      egui::vec2(row_width, copy_height),
+    );
+    let text_rect = egui::Rect::from_min_max(area.min, egui::pos2(area.max.x, row_rect.min.y - margin));
+    if text_rect.width() < 1.0 || text_rect.height() < 1.0 {
+      return;
+    }
     let row_height = ui.text_style_height(&egui::TextStyle::Monospace);
     let rows = ((text_rect.height() - 8.0) / row_height).floor().max(3.0) as usize;
     let mut text_ui = ui.new_child(
@@ -236,13 +250,7 @@ impl App {
       self.result_dirty = true;
     }
 
-    let button_area = egui::Rect::from_min_max(egui::pos2(area.min.x, text_rect.max.y), area.max);
     let show_copied = self.copied_at.is_some_and(|at| at.elapsed() < Duration::from_secs(2));
-    let mut row_width = 180.0;
-    if self.pending_result.is_some() {
-      row_width += 130.0 + 12.0;
-    }
-    let row_rect = egui::Rect::from_center_size(button_area.center(), egui::vec2(row_width, 52.0));
     let mut row_ui = ui.new_child(
       egui::UiBuilder::new()
         .max_rect(row_rect)
