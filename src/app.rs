@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use eframe::egui::{self, Color32, TextureHandle, TextureOptions};
 
 use crate::config::{Config, config_path};
-use crate::constants::{API_KEY_PREFIX, MARGIN_3MM};
+use crate::constants::MARGIN_3MM;
 use crate::image_source::{self, LoadedImage};
 use crate::ocr::{self, OcrClient, OcrUpload};
 
@@ -299,15 +299,9 @@ impl App {
     if key == self.config.api_key {
       return;
     }
-    if key.is_empty() {
+    if let Err(error) = ocr::validate_api_key(&key) {
       if force {
-        self.push_log("API Key 不能为空");
-      }
-      return;
-    }
-    if !key.starts_with(API_KEY_PREFIX) {
-      if force {
-        self.push_log(format!("API Key 格式无效, 应以 {API_KEY_PREFIX} 开头"));
+        self.push_log(error.user_message());
       }
       return;
     }
