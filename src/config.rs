@@ -76,4 +76,19 @@ mod tests {
     let config = Config { api_key: "   ".to_string() };
     assert!(!config.is_configured());
   }
+
+  #[test]
+  fn save_creates_parent_dirs_and_load_roundtrips() {
+    let dir = std::env::temp_dir().join(format!("mt-config-test-{}", std::process::id()));
+    let path = dir.join("nested").join("mt-config.json");
+    let config = Config {
+      api_key: "focr_temp".to_string(),
+    };
+
+    config.save(&path).unwrap();
+    let loaded = Config::load(&path).unwrap();
+    assert_eq!(config, loaded);
+
+    std::fs::remove_dir_all(&dir).ok();
+  }
 }
