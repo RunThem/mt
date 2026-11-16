@@ -10,6 +10,8 @@ use crate::image_source::{self, LoadedImage};
 use crate::ocr::{self, OcrClient, OcrUpload};
 
 const SUCCESS_COLOR: Color32 = Color32::from_rgb(0x2e, 0x7d, 0x32);
+const BOX_BORDER_COLOR: Color32 = Color32::from_gray(160);
+const BOX_BORDER_WIDTH: f32 = 1.0;
 /// TextEdit 默认左右内边距之和, 用于让输入框外沿精确落在 3mm 边距上.
 const TEXT_EDIT_HORIZONTAL_MARGIN: f32 = 8.0;
 /// 顶部复制条的最小高度.
@@ -34,8 +36,6 @@ pub struct App {
   key_input: String,
   /// 停止输入后延迟保存 API Key
   key_save_due: Option<Instant>,
-  /// 图片区获得焦点后, Ctrl+C 读取剪贴板图片
-  image_area_active: bool,
   /// 当前帧图片区外框尺寸, 用于让 OCR 文本框保持同样大小
   image_area_size: Option<egui::Vec2>,
   image: Option<LoadedImage>,
@@ -66,7 +66,6 @@ impl App {
       config_path: path,
       key_input,
       key_save_due: None,
-      image_area_active: false,
       image_area_size: None,
       image: None,
       texture: None,
@@ -110,9 +109,6 @@ impl App {
         self.key_save_due = Some(Instant::now() + Duration::from_millis(600));
         ui.ctx().request_repaint_after(Duration::from_millis(600));
       }
-      if response.gained_focus() {
-        self.image_area_active = false;
-      }
       if response.lost_focus() {
         commit_now = true;
       }
@@ -146,26 +142,8 @@ impl App {
     }
     self.image_area_size = Some(rect.size());
 
-    let response = ui.interact(rect, ui.id().with("image_area"), egui::Sense::click());
-    if response.clicked() {
-      self.image_area_active = true;
-      ui.ctx().memory_mut(|memory| {
-        if let Some(focused) = memory.focused() {
-          memory.surrender_focus(focused);
-        }
-      });
-    } else if self.image_area_active && ui.ctx().input(|input| input.pointer.any_click()) {
-      self.image_area_active = false;
-    }
-
-    let ctx = ui.ctx().clone();
-    // egui-winit 会把 Ctrl+C 转成 Event::Copy, 不会产生 Key::C.
-    let shortcut = self.image_area_active && ctx.input(|input| input.events.iter().any(|event| matches!(event, egui::Event::Copy)));
-    if shortcut {
-      self.load_clipboard(&ctx);
-    }
-
-    let background = if response.hovered() || self.image_area_active {
+    let response = ui.interact(rect, ui.id().with("image_area"), egui::Sense::hover());
+    let background = if response.hovered() {
       ui.visuals().widgets.hovered.bg_fill
     } else {
       ui.visuals().faint_bg_color
@@ -188,7 +166,7 @@ impl App {
     } else {
       let color = ui.visuals().weak_text_color();
       let galley = ui.painter().layout(
-        "点击此处后按 Ctrl+C 读取剪贴板图片\n或从文件管理器拖放图片".to_string(),
+        "按 Ctrl+C 读取剪贴板图片\n或从文件管理器拖放图片".to_string(),
         egui::FontId::proportional(15.0),
         color,
         (rect.width() - 20.0).max(40.0),
@@ -197,14 +175,8 @@ impl App {
       ui.painter().galley(pos, galley, color);
     }
 
-    if self.image_area_active {
-      ui.painter().rect_stroke(
-        rect,
-        6.0,
-        egui::Stroke::new(1.5_f32, ui.visuals().selection.stroke.color),
-        egui::StrokeKind::Inside,
-      );
-    }
+    ui.painter()
+      .rect_stroke(rect, 6.0, egui::Stroke::new(BOX_BORDER_WIDTH, BOX_BORDER_COLOR), egui::StrokeKind::Inside);
   }
 
   fn load_clipboard(&mut self, ctx: &egui::Context) {
@@ -247,7 +219,7 @@ impl App {
         .layout(egui::Layout::top_down(egui::Align::Min)),
     );
     // 文本框边框常显, 不依赖鼠标 hover.
-    let text_box_border = egui::Stroke::new(1.0_f32, Color32::from_gray(160));
+    let text_box_border = egui::Stroke::new(BOX_BORDER_WIDTH, BOX_BORDER_COLOR);
     text_ui.visuals_mut().widgets.inactive.bg_stroke = text_box_border;
     text_ui.visuals_mut().widgets.hovered.bg_stroke = text_box_border;
     let response = text_ui.add_sized(
@@ -258,9 +230,6 @@ impl App {
         .hint_text("OCR 结果与日志会显示在这里, 可手动修改后再复制")
         .code_editor(),
     );
-    if response.gained_focus() {
-      self.image_area_active = false;
-    }
     if response.changed() {
       self.result_dirty = true;
     }
@@ -432,7 +401,18 @@ impl App {
     }
   }
 
+  /// 只要 mt 窗口获得键盘焦点, Ctrl+C 就读取剪贴板图片, 不要求先点击图片区.
+  fn handle_clipboard_shortcut(&mut self, ctx: &egui::Context) {
+    let copy_pressed = ctx.input(|input| input.events.iter().any(|event| matches!(event, egui::Event::Copy)));
+    if copy_pressed {
+      // egui-winit 把 Ctrl+C 转成 Event::Copy; 消费掉, 避免文本框再处理一次.
+      ctx.input_mut(|input| input.events.retain(|event| !matches!(event, egui::Event::Copy)));
+      self.load_clipboard(ctx);
+    }
+  }
+
   fn handle_dropped_files(&mut self, ctx: &egui::Context) {
+    // 文件拖到窗口任意位置都接收, 不要求落在图片区.
     let dropped = ctx.input(|input| input.raw.dropped_files.clone());
     if dropped.is_empty() {
       return;
@@ -456,6 +436,7 @@ impl eframe::App for App {
 
   fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
     self.poll_ocr();
+    self.handle_clipboard_shortcut(ctx);
     self.handle_dropped_files(ctx);
 
     if self.copied_at.is_some_and(|at| at.elapsed() >= Duration::from_secs(2)) {
