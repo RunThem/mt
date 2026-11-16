@@ -109,10 +109,10 @@ impl App {
       });
       ui.add_space(6.0);
     });
-    self.flush_key_save(commit_now);
+    self.flush_key_save(ctx, commit_now);
   }
 
-  fn flush_key_save(&mut self, force: bool) {
+  fn flush_key_save(&mut self, ctx: &egui::Context, force: bool) {
     if !force {
       match self.key_save_due {
         Some(due) if Instant::now() >= due => {}
@@ -120,7 +120,7 @@ impl App {
       }
     }
     self.key_save_due = None;
-    self.save_key(force);
+    self.save_key(ctx, force);
   }
 
   fn image_section(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
@@ -264,6 +264,7 @@ impl App {
     self.image = Some(image);
     self.ocr_state = OcrState::Idle;
     self.pending_result = None;
+    self.start_ocr(ctx);
   }
 
   fn clear_image(&mut self) {
@@ -273,7 +274,7 @@ impl App {
     self.pending_result = None;
   }
 
-  fn save_key(&mut self, force: bool) {
+  fn save_key(&mut self, ctx: &egui::Context, force: bool) {
     let key = self.key_input.trim().to_string();
     if key == self.config.api_key {
       return;
@@ -298,6 +299,9 @@ impl App {
         self.config = config;
         self.key_input = self.config.api_key.clone();
         self.push_log("API Key 已保存");
+        if self.image.is_some() && matches!(self.ocr_state, OcrState::Idle | OcrState::Error) {
+          self.start_ocr(ctx);
+        }
       }
       Err(error) => self.push_log(format!("保存配置失败: {error:#}")),
     }
